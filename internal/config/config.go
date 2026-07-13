@@ -106,6 +106,17 @@ type RepoConfig struct {
 	// EffectiveRepoConfig): a contributor's pushed branch must not be able to
 	// weaken documentation rules for its own review.
 	Document DocumentRaw `yaml:"document"`
+	// DisableProjectSettings opts the repository out of loading project-level
+	// agent settings/instructions (AGENTS.md/CLAUDE.md and the equivalent
+	// per-harness project settings) into gate agents. It exists for
+	// agent-orchestration repos (e.g. firstmate) whose project instructions
+	// would otherwise install a fleet-captain identity on a gate agent. It is a
+	// SECURITY boundary honored ONLY from the trusted default-branch copy of
+	// .no-mistakes.yaml (see EffectiveRepoConfig and the daemon's
+	// assertGateTrustedConfigReadable): a contributor's pushed branch must not be
+	// able to turn it off (or on). Default false; a plain bool so a missing key
+	// or a YAML/JSON null is falsy and preserves current loading.
+	DisableProjectSettings bool `yaml:"disable_project_settings"`
 }
 
 // DocumentRaw is the YAML representation of document-step settings.
@@ -118,14 +129,15 @@ type DocumentRaw struct {
 
 func (c *RepoConfig) UnmarshalYAML(value *yaml.Node) error {
 	type repoConfigRaw struct {
-		Agent             agentList   `yaml:"agent"`
-		Commands          Commands    `yaml:"commands"`
-		IgnorePatterns    []string    `yaml:"ignore_patterns"`
-		AllowRepoCommands bool        `yaml:"allow_repo_commands"`
-		AutoFix           AutoFixRaw  `yaml:"auto_fix"`
-		Intent            IntentRaw   `yaml:"intent"`
-		Test              TestRaw     `yaml:"test"`
-		Document          DocumentRaw `yaml:"document"`
+		Agent                  agentList   `yaml:"agent"`
+		Commands               Commands    `yaml:"commands"`
+		IgnorePatterns         []string    `yaml:"ignore_patterns"`
+		AllowRepoCommands      bool        `yaml:"allow_repo_commands"`
+		AutoFix                AutoFixRaw  `yaml:"auto_fix"`
+		Intent                 IntentRaw   `yaml:"intent"`
+		Test                   TestRaw     `yaml:"test"`
+		Document               DocumentRaw `yaml:"document"`
+		DisableProjectSettings bool        `yaml:"disable_project_settings"`
 	}
 	var raw repoConfigRaw
 	if err := value.Decode(&raw); err != nil {
@@ -140,6 +152,7 @@ func (c *RepoConfig) UnmarshalYAML(value *yaml.Node) error {
 	c.Intent = raw.Intent
 	c.Test = raw.Test
 	c.Document = raw.Document
+	c.DisableProjectSettings = raw.DisableProjectSettings
 	return nil
 }
 
@@ -191,6 +204,11 @@ type Config struct {
 	Intent               Intent
 	Test                 Test
 	Document             Document
+	// DisableProjectSettings is the resolved, trusted-only opt-out (see the
+	// RepoConfig field). When true, gate agents are launched with their
+	// project-level settings/instructions suppressed; the daemon fails the run
+	// closed if the resolved harness has no verified suppression knob.
+	DisableProjectSettings bool
 }
 
 // Document is the resolved document-step config. Instructions come from the
@@ -898,21 +916,23 @@ func parseRepoConfig(data []byte) (*RepoConfig, error) {
 // EffectiveRepoConfig returns the repo config that should drive the pipeline
 // given a pushed-branch copy and the trusted default-branch copy.
 //
-// The code-executing selection fields — Commands (run verbatim via sh -c on
+// The code-executing selection fields - Commands (run verbatim via sh -c on
 // the daemon host) and Agent/Agents (select which processes launch with the
-// maintainer's credentials, including fallback lists and acp: targets) — are
+// maintainer's credentials, including fallback lists and acp: targets) - are
 // taken only from the trusted copy when it is present, so a contributor's
 // pushed branch cannot inject shell or pick an agent. Document (the
 // documentation placement policy injected into the document gate prompt) is
 // trusted-only for the same reason: a pushed branch must not weaken the
-// documentation rules that gate itself. When allowRepoCommands is
+// documentation rules that gate itself. DisableProjectSettings is also
+// trusted-only so a pushed branch cannot enable or defeat the gate-agent
+// project-instruction boundary. When allowRepoCommands is
 // true the maintainer has explicitly opted in (via allow_repo_commands on the
 // TRUSTED default-branch copy) to honoring the pushed branch's commands and
 // agent selection.
 // When there is no trusted copy and the maintainer has not opted in, both
 // fields are forced empty (Agent "" and nil Agents inherit the global agent;
 // Commands{} yields built-in defaults) rather than falling back to the pushed
-// branch — this blocks the supply-chain vector for repos that ship
+// branch - this blocks the supply-chain vector for repos that ship
 // .no-mistakes.yaml only on feature branches.
 //
 // Non-executing fields (ignore patterns, auto-fix, intent, test) are always
@@ -925,8 +945,15 @@ func EffectiveRepoConfig(pushed, trusted *RepoConfig, allowRepoCommands bool) *R
 	effective := *pushed
 	if trusted != nil {
 		effective.Document = trusted.Document
+		// disable_project_settings is a security boundary: honor it ONLY from the
+		// trusted default-branch copy so a pushed branch cannot turn the opt-out
+		// off (and re-enable its own AGENTS.md) or on. A nil trusted copy here
+		// means the trusted config was legitimately absent (the daemon aborts
+		// separately when it could not be READ at all), so falsy is correct.
+		effective.DisableProjectSettings = trusted.DisableProjectSettings
 	} else {
 		effective.Document = DocumentRaw{}
+		effective.DisableProjectSettings = false
 	}
 	if allowRepoCommands {
 		return &effective
@@ -1102,6 +1129,9 @@ func Merge(global *GlobalConfig, repo *RepoConfig) *Config {
 		Intent:               intent,
 		Test:                 test,
 		Document:             Document{Instructions: strings.TrimSpace(repo.Document.Instructions)},
+		// repo is the EffectiveRepoConfig result, so this value is already
+		// trusted-only (EffectiveRepoConfig sourced it from the trusted copy).
+		DisableProjectSettings: repo.DisableProjectSettings,
 	}
 
 	if repo.Agent != "" {
