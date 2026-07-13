@@ -168,6 +168,13 @@ Run the pipeline and decide on its findings as they come up:
      in the background until it is merged, closed, or its configured idle
      timeout elapses, so a human can watch it in the TUI.
    - `passed` - the changes cleared the gate and the PR was merged or closed.
+     With this fork's default pipeline shape (`pipeline.end_after: lint`), a
+     `passed` outcome means the gate stopped after review/test/document/lint
+     with NOTHING pushed: no branch left the machine and no PR exists. The
+     `help` line carries the manual publish commands
+     (`git push origin <branch>` then `gh pr create`) - relay them to
+     the user and NEVER run them yourself; publishing is explicitly the
+     human's move.
    - `failed` or `cancelled` - they did not; read the output and address it.
      Fix whatever the output points at (a failing test, a lint error, a finding
      you skipped), commit the fix on the same feature branch, then drive the

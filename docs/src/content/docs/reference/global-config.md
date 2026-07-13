@@ -261,6 +261,18 @@ Daemon log verbosity.
 | Values  | `debug`, `info`, `warn`, `error` |
 | Default | `info`                           |
 
+### pipeline.end_after
+
+The last pipeline step that runs; every later step is marked skipped.
+**This fork defaults to `lint`**: the gate reviews, tests, documents, and lints, then stops with nothing pushed and prints the manual publish commands (`git push origin <branch>` then `gh pr create`) for you to run yourself.
+Set `ci` to restore the upstream full-auto pipeline (push → PR → CI monitoring); `push` and `pr` are intermediate stops.
+A repository can override this value from the trusted default-branch `.no-mistakes.yaml` only (see [repo config](/reference/repo-config/)).
+
+```yaml
+pipeline:
+  end_after: lint
+```
+
 ### session_reuse
 
 Per-run, per-role agent session reuse for the review loop.

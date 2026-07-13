@@ -64,6 +64,18 @@ type GlobalConfig struct {
 	AutoFix      AutoFixRaw
 	Intent       IntentRaw
 	Test         TestRaw
+	Pipeline     PipelineRaw
+}
+
+// PipelineRaw is the YAML representation of pipeline-shape settings.
+type PipelineRaw struct {
+	// EndAfter names the last pipeline step that runs; every later step is
+	// marked skipped. Empty means the built-in default (DefaultEndAfter).
+	// This fork defaults to "lint": the gate reviews, tests, documents, and
+	// lints, then stops and leaves pushing and PR creation to the human.
+	// Set end_after: ci to restore the upstream full-auto push -> PR -> CI
+	// pipeline.
+	EndAfter string `yaml:"end_after"`
 }
 
 // globalConfigRaw is the on-disk YAML representation with duration as string.
@@ -82,6 +94,7 @@ type globalConfigRaw struct {
 	AutoFix              AutoFixRaw          `yaml:"auto_fix"`
 	Intent               IntentRaw           `yaml:"intent"`
 	Test                 TestRaw             `yaml:"test"`
+	Pipeline             PipelineRaw         `yaml:"pipeline"`
 }
 
 // RepoConfig represents .no-mistakes.yaml in a repo root.
@@ -117,6 +130,12 @@ type RepoConfig struct {
 	// able to turn it off (or on). Default false; a plain bool so a missing key
 	// or a YAML/JSON null is falsy and preserves current loading.
 	DisableProjectSettings bool `yaml:"disable_project_settings"`
+	// Pipeline carries the repo's pipeline-shape override (end_after). It
+	// controls whether the gate pushes branches and opens PRs with the
+	// maintainer's credentials, so it is honored ONLY from the trusted
+	// default-branch copy of .no-mistakes.yaml (see EffectiveRepoConfig): a
+	// pushed branch must not be able to re-enable auto-push for its own run.
+	Pipeline PipelineRaw `yaml:"pipeline"`
 }
 
 // DocumentRaw is the YAML representation of document-step settings.
@@ -138,6 +157,7 @@ func (c *RepoConfig) UnmarshalYAML(value *yaml.Node) error {
 		Test                   TestRaw     `yaml:"test"`
 		Document               DocumentRaw `yaml:"document"`
 		DisableProjectSettings bool        `yaml:"disable_project_settings"`
+		Pipeline               PipelineRaw `yaml:"pipeline"`
 	}
 	var raw repoConfigRaw
 	if err := value.Decode(&raw); err != nil {
@@ -153,6 +173,7 @@ func (c *RepoConfig) UnmarshalYAML(value *yaml.Node) error {
 	c.Test = raw.Test
 	c.Document = raw.Document
 	c.DisableProjectSettings = raw.DisableProjectSettings
+	c.Pipeline = raw.Pipeline
 	return nil
 }
 
@@ -209,6 +230,34 @@ type Config struct {
 	// project-level settings/instructions suppressed; the daemon fails the run
 	// closed if the resolved harness has no verified suppression knob.
 	DisableProjectSettings bool
+	// EndAfter is the resolved last pipeline step to execute; steps after it
+	// are marked skipped. Defaults to DefaultEndAfter (lint) so the gate
+	// stops before push/PR/CI and leaves publishing to the human. The repo
+	// value is trusted-only (see RepoConfig.Pipeline).
+	EndAfter types.StepName
+}
+
+// DefaultEndAfter is the last pipeline step that runs when pipeline.end_after
+// is unset anywhere: this fork stops the gate after lint (review, test,
+// document, and lint all green) and never auto-pushes or opens PRs. Set
+// pipeline.end_after: ci globally or in a repo's trusted .no-mistakes.yaml to
+// restore the upstream full-auto behavior.
+const DefaultEndAfter = types.StepLint
+
+// ParseEndAfter validates a pipeline.end_after value. Empty means "use the
+// default" and returns "". Any other value must be a known pipeline step.
+func ParseEndAfter(value string) (types.StepName, error) {
+	trimmed := strings.ToLower(strings.TrimSpace(value))
+	if trimmed == "" {
+		return "", nil
+	}
+	step := types.StepName(trimmed)
+	for _, known := range types.AllSteps() {
+		if step == known {
+			return step, nil
+		}
+	}
+	return "", fmt.Errorf("parse pipeline.end_after %q: unknown step (valid: intent, rebase, review, test, document, lint, push, pr, ci)", value)
 }
 
 // Document is the resolved document-step config. Instructions come from the
@@ -348,6 +397,15 @@ daemon_connect_timeout: "3s"
 # Supported for claude and codex; other agents run cold. Set false to force
 # every agent invocation cold.
 session_reuse: true
+
+# Pipeline shape. end_after names the last step that runs; everything after it
+# is marked skipped. This fork defaults to "lint": the gate reviews, tests,
+# documents, and lints, then stops and prints the manual push/PR commands for
+# you to run yourself. Set "ci" to restore the upstream full-auto pipeline
+# (push -> PR -> CI monitoring). A repo can override this from the trusted
+# default-branch .no-mistakes.yaml only.
+pipeline:
+  end_after: lint
 
 # Log level for daemon output
 # Options: debug, info, warn, error
@@ -842,6 +900,10 @@ func LoadGlobal(path string) (*GlobalConfig, error) {
 	cfg.AutoFix = raw.AutoFix
 	cfg.Intent = raw.Intent
 	cfg.Test = raw.Test
+	if _, err := ParseEndAfter(raw.Pipeline.EndAfter); err != nil {
+		return nil, err
+	}
+	cfg.Pipeline = raw.Pipeline
 
 	return cfg, nil
 }
@@ -951,9 +1013,14 @@ func EffectiveRepoConfig(pushed, trusted *RepoConfig, allowRepoCommands bool) *R
 		// means the trusted config was legitimately absent (the daemon aborts
 		// separately when it could not be READ at all), so falsy is correct.
 		effective.DisableProjectSettings = trusted.DisableProjectSettings
+		// pipeline.end_after gates whether the run pushes and opens PRs with
+		// the maintainer's credentials, so it is trusted-only for the same
+		// reason: a pushed branch must not re-enable auto-push for itself.
+		effective.Pipeline = trusted.Pipeline
 	} else {
 		effective.Document = DocumentRaw{}
 		effective.DisableProjectSettings = false
+		effective.Pipeline = PipelineRaw{}
 	}
 	if allowRepoCommands {
 		return &effective
@@ -1039,6 +1106,20 @@ func applyTestOverrides(dst *Test, src *TestRaw) {
 	if src.Evidence.Dir != nil && strings.TrimSpace(*src.Evidence.Dir) != "" {
 		dst.Evidence.Dir = strings.TrimSpace(*src.Evidence.Dir)
 	}
+}
+
+// resolveEndAfter merges pipeline.end_after: the (trusted-only) repo value
+// wins over the global value, which wins over DefaultEndAfter. Values are
+// re-validated defensively; an invalid value falls back to the next source
+// rather than widening the pipeline.
+func resolveEndAfter(global, repo string) types.StepName {
+	if step, err := ParseEndAfter(repo); err == nil && step != "" {
+		return step
+	}
+	if step, err := ParseEndAfter(global); err == nil && step != "" {
+		return step
+	}
+	return DefaultEndAfter
 }
 
 // autoFixDefaults returns the default auto-fix configuration.
@@ -1132,6 +1213,7 @@ func Merge(global *GlobalConfig, repo *RepoConfig) *Config {
 		// repo is the EffectiveRepoConfig result, so this value is already
 		// trusted-only (EffectiveRepoConfig sourced it from the trusted copy).
 		DisableProjectSettings: repo.DisableProjectSettings,
+		EndAfter:               resolveEndAfter(global.Pipeline.EndAfter, repo.Pipeline.EndAfter),
 	}
 
 	if repo.Agent != "" {

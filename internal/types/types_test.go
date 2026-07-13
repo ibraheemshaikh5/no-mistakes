@@ -52,3 +52,21 @@ func TestStepNameUnmarshalJSON_LegacyBabysit(t *testing.T) {
 		t.Fatalf("step = %q, want %q", step, StepCI)
 	}
 }
+
+func TestStepsAfter(t *testing.T) {
+	if got := StepsAfter(StepLint); len(got) != 3 || got[0] != StepPush || got[1] != StepPR || got[2] != StepCI {
+		t.Errorf("StepsAfter(lint) = %v, want [push pr ci]", got)
+	}
+	if got := StepsAfter(StepCI); got != nil {
+		t.Errorf("StepsAfter(ci) = %v, want nil", got)
+	}
+	if got := StepsAfter(StepName("")); got != nil {
+		t.Errorf("StepsAfter(empty) = %v, want nil (fail open)", got)
+	}
+	if got := StepsAfter(StepName("bogus")); got != nil {
+		t.Errorf("StepsAfter(bogus) = %v, want nil (fail open)", got)
+	}
+	if got := StepsAfter(StepName("babysit")); got != nil {
+		t.Errorf("StepsAfter(babysit) = %v, want nil (normalizes to ci)", got)
+	}
+}

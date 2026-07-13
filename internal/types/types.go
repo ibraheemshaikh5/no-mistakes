@@ -104,6 +104,23 @@ func AllSteps() []StepName {
 	return []StepName{StepIntent, StepRebase, StepReview, StepTest, StepDocument, StepLint, StepPush, StepPR, StepCI}
 }
 
+// StepsAfter returns the pipeline steps that execute after the named step, in
+// execution order. An unknown or empty name returns nil (nothing to cut), so a
+// misconfigured pipeline.end_after can never silently skip the whole pipeline.
+func StepsAfter(name StepName) []StepName {
+	order := normalizeStepName(name).Order()
+	if order == 0 {
+		return nil
+	}
+	var after []StepName
+	for _, step := range AllSteps() {
+		if step.Order() > order {
+			after = append(after, step)
+		}
+	}
+	return after
+}
+
 // StepStatus represents the lifecycle state of a pipeline step.
 type StepStatus string
 

@@ -287,6 +287,18 @@ func (rv runView) fixRows() []fixRow {
 	return rows
 }
 
+// pushSkipped reports whether the push step was cut from this run (by
+// pipeline.end_after or --skip), meaning the branch never left the gate and
+// publishing is the human's move.
+func (rv runView) pushSkipped() bool {
+	for _, s := range rv.Steps {
+		if s.Name == string(types.StepPush) {
+			return s.Status == string(types.StepStatusSkipped)
+		}
+	}
+	return false
+}
+
 func (rv runView) activeRows() []activeStepRow {
 	var rows []activeStepRow
 	for _, s := range rv.Steps {

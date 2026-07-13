@@ -22,3 +22,14 @@ const staleMonitorGuidance = "If this PR later falls behind the default branch o
 // body and the published agents guide, with CLI-reference coverage in
 // docs/.../reference/cli.md.
 const preserveGateFixCommitsGuidance = "When you make an additional fix after a gate round has already produced fix commits, commit it on top of the existing branch and run `no-mistakes axi run --intent \"...\"` with the original user intent. Never abort-and-restart, reset the branch, or open a new branch in a way that drops prior gate-fix commits. A fresh run re-validates the branch's current state, so already-resolved findings do not re-surface."
+
+// manualPublishHelp is the canonical guidance emitted when a run passes with
+// the push step cut (pipeline.end_after, this fork's default, or --skip=push):
+// the gate is green but nothing was pushed, so publishing is explicitly the
+// human's move. The agent must relay these commands, never run them.
+func manualPublishHelp(branch string) string {
+	if branch == "" {
+		branch = "<branch>"
+	}
+	return "Gate green - nothing was pushed (pipeline.end_after). Give the user these commands to publish when ready; do NOT run them yourself: `git push origin " + branch + "` then `gh pr create`."
+}

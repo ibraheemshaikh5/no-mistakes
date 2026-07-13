@@ -282,6 +282,10 @@ func (m *RunManager) resumeRecoveredRun(plan recoveredRunPlan) {
 	}
 	runCtx, cancel := context.WithCancelCause(context.Background())
 	executor := pipeline.NewExecutor(m.db, m.paths, plan.cfg, plan.agent, plan.steps, m.broadcast)
+	// Reapply the config-derived pipeline cut on recovery: --skip flags are
+	// not recoverable, but end_after comes from config and must keep holding
+	// so a recovered run cannot push past the configured end of the pipeline.
+	executor.SetSkippedSteps(endAfterSkips(plan.cfg))
 	done := make(chan struct{})
 	m.mu.Lock()
 	m.executors[plan.run.ID] = executor
@@ -587,6 +591,16 @@ func (m *RunManager) HandleRerun(ctx context.Context, repoID, branch string, ski
 	return m.startRun(ctx, repo, branch, headSHA, baseSHA, "rerun", skipSteps, intent)
 }
 
+// endAfterSkips returns the steps cut by the resolved pipeline.end_after
+// setting: everything ordered after cfg.EndAfter. A zero-value or unknown
+// EndAfter cuts nothing (types.StepsAfter fails open to the full pipeline).
+func endAfterSkips(cfg *config.Config) []types.StepName {
+	if cfg == nil {
+		return nil
+	}
+	return types.StepsAfter(cfg.EndAfter)
+}
+
 // startRun creates a run, sets up a worktree, and launches pipeline execution.
 // A non-empty intent is stamped onto the run as agent-supplied, so the intent
 // step uses it instead of inferring from transcripts.
@@ -788,7 +802,10 @@ func (m *RunManager) startRun(ctx context.Context, repo *db.Repo, branch, headSH
 	// Create executor with event broadcast.
 	runCtx, cancel := context.WithCancelCause(context.Background())
 	executor := pipeline.NewExecutor(m.db, m.paths, cfg, ag, execSteps, m.broadcast)
-	executor.SetSkippedSteps(skipSteps)
+	// pipeline.end_after cuts the pipeline by marking every later step
+	// skipped, reusing the same skip machinery as --skip so the TUI/AXI
+	// surfaces render the cut steps consistently.
+	executor.SetSkippedSteps(append(skipSteps, endAfterSkips(cfg)...))
 
 	// Track executor.
 	done := make(chan struct{})

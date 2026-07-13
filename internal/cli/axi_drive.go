@@ -563,6 +563,9 @@ func renderDriveResult(cmd *cobra.Command, run *ipc.RunInfo, ciReady bool) error
 		if rv.PRURL != "" {
 			help = append(help, fmt.Sprintf("Open the PR: %s", rv.PRURL))
 		}
+		if rv.PRURL == "" && rv.pushSkipped() {
+			help = append(help, manualPublishHelp(rv.Branch))
+		}
 		help = append(help, successReportHelp(fixes)...)
 		fields = append(fields, toon.Field{Key: "help", Value: help})
 		emitDoc(cmd, fields...)

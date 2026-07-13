@@ -8,7 +8,7 @@ Per-repo configuration lives in `.no-mistakes.yaml` at the root of your reposito
 :::caution[Security: gate-control fields are read from the default branch]
 `commands.*` execute arbitrary shell on the daemon host via `sh -c` / `cmd.exe /c`, and `agent` selects which process launches there (including ordered fallback lists and `acp:` targets) with the maintainer's credentials.
 To prevent a supply-chain attack where a contributor lands a hostile value on a gated branch, the daemon always reads **`commands` and `agent` from your default branch** (e.g. `origin/main`), never from the pushed SHA, and reads them at the exact commit a fresh fetch resolved (so a stale `origin/<default>` ref cannot serve a value the live default branch removed).
-The daemon also reads `document.instructions` and `disable_project_settings` only from that trusted copy.
+The daemon also reads `document.instructions`, `disable_project_settings`, and `pipeline.end_after` only from that trusted copy.
 If the default branch cannot be fetched and resolved to a readable commit, or its present `.no-mistakes.yaml` cannot be read and parsed, the run aborts before launching an agent.
 A readable default-branch tree with no `.no-mistakes.yaml` is valid and uses defaults.
 Commit the gate-control settings you want to your default branch.
@@ -122,6 +122,16 @@ When this option is `false`, missing, or `null`, all agents retain their existin
 This field is honored **only from the trusted default-branch copy** of `.no-mistakes.yaml`, regardless of `allow_repo_commands`.
 A pushed branch cannot enable it or disable a trusted opt-in.
 If the trusted commit or its present config file cannot be read and parsed, the run aborts rather than guessing that the option is disabled.
+
+### pipeline.end_after
+
+Per-repo override of the global [`pipeline.end_after`](/reference/global-config/#pipelineend_after).
+Because it controls whether the gate pushes branches and opens PRs with the maintainer's credentials, it is honored **only from the trusted default-branch copy** of `.no-mistakes.yaml` — a pushed branch cannot re-enable auto-push for its own run.
+
+```yaml
+pipeline:
+  end_after: ci
+```
 
 ### commands.test
 

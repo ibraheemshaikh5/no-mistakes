@@ -448,6 +448,9 @@ func TestDefaultConfigYAML_MatchesGoDefaults(t *testing.T) {
 	if raw.AutoFix.Rebase == nil || *raw.AutoFix.Rebase != defaults.Rebase {
 		t.Errorf("YAML auto_fix.rebase = %v, Go default = %d", raw.AutoFix.Rebase, defaults.Rebase)
 	}
+	if types.StepName(raw.Pipeline.EndAfter) != DefaultEndAfter {
+		t.Errorf("YAML pipeline.end_after = %q, Go default = %q", raw.Pipeline.EndAfter, DefaultEndAfter)
+	}
 }
 
 func TestLoadGlobal_AutoFixDefaults(t *testing.T) {
